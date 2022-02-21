@@ -1,0 +1,179 @@
+import matplotlib.pyplot as pl
+import os
+import pandas as pd
+from skimage.feature import hog
+import glob as gb
+import cv2
+import numpy as np
+from tensorflow.keras.models import Sequential,Model
+from tensorflow.keras.layers import Dense,BatchNormalization,Flatten,AveragePooling2D,MaxPool2D,Conv2D,MaxPooling2D,Dropout,GlobalAveragePooling2D,Input,Activation
+from tensorflow.keras.callbacks import EarlyStopping,ReduceLROnPlateau
+from sklearn.model_selection import train_test_split,KFold,StratifiedKFold
+from tensorflow.keras import backend as K
+import seaborn as sns
+from tensorflow.keras import layers
+import tensorflow as tf
+from tensorflow.keras import applications
+from tensorflow.keras.optimizers import Adam
+from keras.preprocessing.image import ImageDataGenerator
+import keras
+from sklearn.utils import shuffle
+
+
+path='../input/scincanceraugmented/Dataset/Train/Train'
+path_test='../input/scincanceraugmented/Dataset/Test/Test'
+X_train=[]
+Y_train=[]
+X_test=[]
+Y_test=[]
+width=180
+hight=180
+batch_size=32
+data=[]
+input_shape=(width,hight,3)
+epoch=100
+data_aug=[]
+label=[]
+y=[]
+
+dataa=['nevus','seborrheic keratosis','squamous cell carcinoma','vascular lesion']
+
+for folders in os.listdir(path):
+    i=folders.split(',')
+    image=i[1].split('.') 
+    if (image[0] =="squamous cell carcinoma" or image[0] =="vascular lesion"
+        or image[0] =="seborrheic keratosis"
+        or image[0] =="nevus" ):
+    
+        
+        images=pl.imread(path+'/'+folders)
+        resize_image=cv2.resize(images,(width,hight))
+        
+        grayScale = cv2.cvtColor(resize_image, cv2.COLOR_RGB2GRAY)
+
+    # kernel for morphologyEx
+        kernel = cv2.getStructuringElement(1, (17, 17))
+
+    # apply MORPH_BLACKHAT to grayScale image
+        blackhat = cv2.morphologyEx(grayScale, cv2.MORPH_BLACKHAT, kernel)
+
+    # apply thresholding to blackhat
+        _, threshold = cv2.threshold(blackhat, 10, 255, cv2.THRESH_BINARY)
+    
+    # inpaint with original image and threshold image
+        final_image = cv2.inpaint(resize_image, threshold, 1, cv2.INPAINT_TELEA)
+
+
+        X_train.append(final_image)
+        Y_train.append(dataa.index(image[0]))
+
+del image,resize_image,i,images
+        
+
+for folders in os.listdir(path_test):
+    i=folders.split(',')
+    image=i[1].split('.') 
+    if (image[0] =="squamous cell carcinoma" or image[0] =="vascular lesion"
+        or image[0] =="seborrheic keratosis"
+        or image[0] =="nevus"):
+    
+        
+        images=pl.imread(path_test+'/'+folders)
+        resize_image=cv2.resize(images,(width,hight))
+        
+        grayScale = cv2.cvtColor(resize_image, cv2.COLOR_RGB2GRAY)
+
+    # kernel for morphologyEx
+        kernel = cv2.getStructuringElement(1, (17, 17))
+
+    # apply MORPH_BLACKHAT to grayScale image
+        blackhat = cv2.morphologyEx(grayScale, cv2.MORPH_BLACKHAT, kernel)
+
+    # apply thresholding to blackhat
+        _, threshold = cv2.threshold(blackhat, 10, 255, cv2.THRESH_BINARY)
+    
+    # inpaint with original image and threshold image
+        final_image = cv2.inpaint(resize_image, threshold, 1, cv2.INPAINT_TELEA)
+
+
+
+        X_test.append(final_image)
+        Y_test.append(dataa.index(image[0]))
+pl.imshow(resize_image)
+del image,resize_image,i,images
+        
+
+
+x_train=np.array(X_train)
+y_train=np.array(Y_train)
+x_test=np.array(X_test)
+y_test=np.array(Y_test)
+print(x_train.shape)
+print(x_test.shape)
+print(y_train.shape)
+del X_train,Y_train,X_test,Y_test
+
+#create data augmentation
+
+ for l,image in enumerate(x_train):
+            data.append((image))
+            y.append(y_train[l])
+            data.append(tf.keras.layers.RandomZoom( .8)(image))
+            y.append(y_train[l])
+            data.append(tf.keras.layers.RandomFlip("vertical")(image))
+            y.append(y_train[l])
+            data.append(tf.keras.layers.RandomRotation(.5)(image))
+            y.append(y_train[l])
+            data.append(tf.keras.layers.RandomFlip("horizontal")(image))
+            y.append(y_train[l])
+            data.append(tf.keras.layers.RandomZoom( 0.6)(image))
+            y.append(y_train[l])
+
+
+data_aug=np.array(data)
+label=np.array(y)
+del data,y
+print(data_aug.shape)
+print(label.shape)
+
+#create model
+
+    model = Sequential([
+
+    Conv2D(16,kernel_size=(1,1),activation='relu',input_shape=input_shape),
+    BatchNormalization(),
+    MaxPool2D(2,2),
+    Conv2D(64,kernel_size=(1,1),activation='relu'), 
+    BatchNormalization(),
+    MaxPool2D(2,2),
+    Conv2D(32,kernel_size=(1,1),activation='relu'), 
+    BatchNormalization(),
+    MaxPool2D(2,2),
+    Conv2D(64,kernel_size=(1,1),activation='relu'),
+    MaxPool2D(2,2),
+    Flatten() , 
+    Dense(1025,activation='relu') ,
+    Dropout(rate=0.1) , 
+    BatchNormalization(),
+    Dense(512,activation='relu') ,
+    Dropout(rate=0.1) , 
+    BatchNormalization(),
+    Dense(4,activation='softmax') ])
+
+
+
+model.compile(optimizer='adam',loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+early_stoping= EarlyStopping(patience=20,restore_best_weights=True)
+callbacks=[early_stoping]
+
+
+data_aug, label=shuffle(np.array(data_aug),np.array(label), random_state=6)
+history = model.fit(data_aug,label,batch_size=batch_size,epochs = epoch, validation_data =(x_test,y_test), callbacks=callbacks)
+
+
+ModelLoss, ModelAccuracy = model.evaluate(x_test,y_test)
+print('Val Loss is {}'.format(ModelLoss))
+print('Val Accuracy is {}'.format(ModelAccuracy ))
+
+ #model.save("weihgt_")
